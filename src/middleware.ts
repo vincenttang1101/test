@@ -11,19 +11,24 @@ export const config = {
 }
 
 export async function middleware(req: NextRequest): Promise<NextResponse> {
-  let lng: LanguageEnum | undefined
+  let resolvedLanguage: LanguageEnum | undefined
 
   // Lấy ngôn ngữ hiện tại từ URL (nếu có)
-  const currentLng = req.nextUrl.pathname.split('/')[1] as LanguageEnum
+  const cookieLanguage = req.cookies.get(cookieName)?.value as LanguageEnum
+  const urlLanguage = req.nextUrl.pathname.split('/')[1] as LanguageEnum
 
   // Nếu ngôn ngữ trong URL là hợp lệ, ưu tiên sử dụng ngôn ngữ đó
-  if (languages.includes(currentLng)) {
-    lng = currentLng
+  if (urlLanguage) {
+    resolvedLanguage = urlLanguage
   }
 
-  console.log('headerrrr', req.ip)
+  // Nếu không có ngôn ngữ trong URL nhưng có trong cookie, sử dụng ngôn ngữ từ cookie
+  if (!urlLanguage && cookieLanguage) {
+    resolvedLanguage = cookieLanguage
+  }
+
   // Ưu tiên xác định ngôn ngữ từ IP
-  if (!lng) {
+  if (!resolvedLanguage) {
     const ip = req.headers.get('x-forwarded-for')?.split(',')[0] || '127.0.0.1'
 
     try {
@@ -31,35 +36,26 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
       const geo = await geoResponse.json()
 
       if (geo && geo.country === 'Vietnam') {
-        lng = LanguageEnum.VI // Nếu từ Việt Nam, đặt ngôn ngữ là tiếng Việt
+        resolvedLanguage = LanguageEnum.VI
       } else {
-        lng = LanguageEnum.EN // Ngôn ngữ mặc định là tiếng Anh nếu không phải Việt Nam
+        resolvedLanguage = LanguageEnum.EN
       }
     } catch (error) {
       console.error('GeoIP lookup failed:', error)
-      lng = undefined // Không xác định được ngôn ngữ từ IP, chuyển sang fallback
+      resolvedLanguage = undefined // Không xác định được ngôn ngữ từ IP, chuyển sang fallback
     }
   }
 
-  // Nếu không xác định được từ IP, fallback sang `Accept-Language`
-  if (!lng) {
-    lng = acceptLanguage.get(req.headers.get('Accept-Language')) as LanguageEnum
-  }
-
   // Nếu không xác định được ngôn ngữ nào, fallback về ngôn ngữ mặc định
-  if (!lng) lng = fallbackLng
-
-  console.log('Current pathname:', req.nextUrl.pathname)
-  console.log('Detected language:', lng)
+  if (!resolvedLanguage) resolvedLanguage = fallbackLng
 
   // Nếu ngôn ngữ trong URL không khớp với ngôn ngữ xác định, thực hiện redirect và cập nhật cookie
-  if (currentLng !== lng) {
-    console.log('Redirecting to:', `/${lng}${req.nextUrl.pathname}`)
-    const redirectUrl = new URL(`/${lng}${req.nextUrl.pathname}`, req.url)
+  if (urlLanguage !== resolvedLanguage || cookieLanguage !== resolvedLanguage) {
+    const redirectUrl = new URL(`/${resolvedLanguage}${req.nextUrl.pathname}`, req.url)
 
-    // Cập nhật cookie để ghi nhớ ngôn ngữ
-    const response = NextResponse.redirect(redirectUrl)
-    response.cookies.set(cookieName, lng)
+    const response = urlLanguage === resolvedLanguage ? NextResponse.next() : NextResponse.redirect(redirectUrl)
+
+    response.cookies.set(cookieName, resolvedLanguage)
 
     return response
   }
